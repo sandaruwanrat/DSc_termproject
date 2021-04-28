@@ -1,0 +1,96 @@
+---
+title: "R Notebook"
+output: html_notebook
+
+---
+
+
+
+```{r}
+#import libraries
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(optimbase)
+library(ggplot2)
+library(DESeq2)
+```
+
+```{r}
+#load dataframe containing each folder path, geneid  and deaad alive condition
+load("cdata.RData")
+
+directory <- "/media/homeShare/sandaru/project_cancer/deadnalive"
+
+#read count data from each data file
+ddsHTSeq <- DESeqDataSetFromHTSeqCount(sampleTable = cancer_d,
+                                       directory = directory,
+                                       design= ~ condition)
+ddsHTSeq
+
+
+
+```
+```{r}
+#Prefiltering
+keep = rowMeans(counts(ddsHTSeq)) > 20
+ddsHTSeq=ddsHTSeq[keep,]
+length(keep)
+dds = DESeq(ddsHTSeq, test = "LRT", reduced = ~1)
+
+dds
+
+```
+
+```{r}
+
+res = results(dds)
+summary(res)
+
+res = results(dds, contrast=c("condition","alive","dead"))
+plotMA(res)
+
+
+
+
+
+
+
+```
+```{r}
+#For wgcna vst
+vsd = vst(ddsHTSeq, blind=FALSE)
+
+sampleDists =- dist(t(assay(vsd)))
+
+sampleDistMatrix =- as.matrix(sampleDists)
+
+rownames(sampleDistMatrix) =- paste(vsd$condition, vsd$type, sep="-")
+colnames(sampleDistMatrix) = NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+
+
+#jpeg(file="vst_data.jpeg")
+
+plotPCA(vsd)
+
+dim(vsd)
+#
+
+print(vsd)
+
+#get the vst data matrix from the object
+vsd_mat = assay(vsd)
+print(vsd_mat)
+#dev.off()
+
+
+
+```
+```{r}
+
+#is.data.frame(vsd_mat)
+write.csv(vsd_mat, file="vsd_cancer_data.csv")
+
+```
+

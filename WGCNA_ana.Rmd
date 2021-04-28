@@ -1,0 +1,507 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_notebook: default
+  word_document: default
+---
+```{r}
+#All the refrence about packages
+#https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/Rpackages/WGCNA/Tutorials/
+#tutorial
+#https://www.youtube.com/watch?v=rRIRMW_RRS4
+```
+
+
+```{r}
+library(BiocManager)
+library(stringi)
+library(WGCNA)
+library(flashClust)
+library(ggplot2)
+library(CatEncoders)
+library(tidyverse)
+library(readr)
+library(dplyr)
+
+
+options(stringsAsFactors = FALSE)
+enableWGCNAThreads()
+
+
+```
+```{r}
+# Load expression data
+
+#load vst data
+dds_norm_counts = read.csv("vsd_cancer_data.csv", header=TRUE,row.names=1)
+
+GeneNames=rownames(dds_norm_counts)
+
+datExpr = as.data.frame(t(dds_norm_counts))
+
+head(dds_norm_counts)
+
+
+```
+
+```{r}
+
+#############Softthreshold##############################################################
+
+NETWORKTYPE = "signed"
+
+#unassinge is not for GRN
+
+RSQUARED_CUTOFF<-0.9
+
+# Choose a set of soft-thresholding powers
+powers = c(c(1:10), seq(from = 12, to=20, by=2))
+
+# Call the network topology analysis function
+
+sft=pickSoftThreshold(datExpr,powerVector=powers, networkType=NETWORKTYPE)
+
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2))
+cex1 = 0.9
+
+
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"))
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red")
+
+# this line corresponds to using an R^2 cut-off of h
+abline(h=RSQUARED_CUTOFF,col="red")
+
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+
+
+
+
+```
+
+```{r}
+#############clustering#############################
+softPower =7
+
+#Calculate adjacencies
+adjacencyP = adjacency(datExpr, power = softPower, type=NETWORKTYPE);
+
+
+#saveRDS(adjacencyP, file = "adjacencyP_sf7.RDS")
+
+
+#load("TOM_sf7.RDS")
+
+
+
+
+
+```
+```{r}
+
+#topological overlapp matrix
+softPower =7
+
+#Topological Overlap Matrix (TOM)
+
+#calculation TOM using adjacencies
+#TOM = TOMsimilarity(adjacencyP, TOMType=NETWORKTYPE, verbose=1)
+
+#calculation of TOM matrix directly from expression data
+TOM=TOMsimilarityFromExpr(datExpr,networkType = "signed", TOMType = "signed", power = softPower,nThreads=2)
+
+
+colnames(TOM) =rownames(TOM) =GeneNames
+
+
+```
+```{r}
+#dissimilarity matrix
+
+dissTOM = 1-TOM
+
+print(dissTOM)
+
+```
+
+```{r}
+##Clustering usingTOM
+# Call the hierarchical clustering function
+geneTree = flashClust(as.dist(dissTOM), method = "average");
+
+sizeGrWindow(12,9)
+
+# Plot the resulting clustering tree (dendrogram)
+
+plot(geneTree, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity",labels = FALSE, hang = 0.04)
+
+
+```
+
+
+
+```{r}
+# need large modules, set the minimum module size relatively high
+
+MIN_MODULE_SIZE=50
+DEEP_SPLIT=0
+
+# Module identification using dynamic tree cut:
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM,
+                            deepSplit = DEEP_SPLIT, pamRespectsDendro = FALSE,
+                            minClusterSize = MIN_MODULE_SIZE);
+table(dynamicMods)
+
+# Convert numeric lables into colors
+dynamicColors = labels2colors(dynamicMods)
+table(dynamicColors)
+
+# Plot the dendrogram and colors underneath
+sizeGrWindow(8,6)
+
+
+plotDendroAndColors(geneTree, dynamicColors, "Dynamic Tree Cut",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05,
+                    main = "Gene dendrogram and module colors")
+
+
+
+
+
+
+```
+
+
+```{r}
+# Transform dissTOM with a power to make moderately strong 
+# connections more visible in the heatmap
+
+plotTOMdiss = dissTOM
+# Set diagonal to NA for a nicer plot
+diag(plotTOMdiss) = NA
+# Call the plot function
+
+ # time-consuming
+
+TOMplot(plotTOMdiss,geneTree, dynamicColors, main = "Network heatmap plot, all genes")
+
+
+
+```
+
+
+
+
+
+
+```{r}
+
+#Merging of modules whose expression profiles are very similar
+
+# Calculate eigengenes
+MEList = moduleEigengenes(datExpr, colors = dynamicColors)
+MEs = MEList$eigengenes
+
+# Calculate dissimilarity of module eigengenes
+MEDiss = cor(MEs, use = 'pairwise.complete.obs')
+MEDiss[!is.finite(MEDiss)] <- 0 
+
+# Cluster module eigengenes
+METree = flashClust(as.dist(MEDiss), method = "average")
+
+# Plot the result
+sizeGrWindow(7, 6)
+
+#jpeg(file="Clustering_of_module_eigengenes.jpeg")
+plot(METree, main = "Clustering of module eigengenes",xlab = "", sub = "")
+#dev.off()
+
+#picking default tree height cut of 0.25
+MEDISSTHRES = 0.25
+
+# Plot the cut line into the dendrogram
+abline(h=MEDISSTHRES, col = "red")
+
+# Call an automatic merging function
+merge = mergeCloseModules(datExpr, dynamicColors, cutHeight = MEDISSTHRES, verbose = 3)
+
+
+# The merged module colors
+mergedColors = merge$colors;
+
+# Eigengenes of the new merged modules:
+mergedMEs = merge$newMEs;
+
+sizeGrWindow(12, 9)
+#pdf(file = "Plots/geneDendro-3.pdf", wi = 9, he = 6)
+plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors),
+                    c("Dynamic Tree Cut", "Merged dynamic"),
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+
+# Rename to moduleColors
+moduleColors = mergedColors
+# Construct numerical labels corresponding to the colors
+colorOrder = c("turquoise", standardColors(50));
+moduleLabels = match(moduleColors, colorOrder)-1;
+MEs = mergedMEs;
+
+
+# Save module colors and labels for use in subsequent parts
+save(MEs, moduleLabels, moduleColors, geneTree, file = "OV-cancer-networkConstruction-stepByStep.RData")
+
+
+
+```
+
+```{r}
+
+ # This part is particularly time-consuming, and the ranks are clustered at the same time
+TOMplot(plotTOMdiss,geneTree, mergedColors, main = "Network heatmap plot, all genes")
+
+#TOMplot(diss1, hier1, as.character(dynamicColors[restGenes]))
+
+```
+
+```{r}
+
+###########################
+######MM and GS identificaton
+############################
+
+# names (colors) of the modules
+
+modNames = substring(names(MEs), 3)
+modNames
+
+geneModuleMembership = as.data.frame(cor(datExpr, MEs, use = "p"))
+geneModuleMembership
+
+nGenes = ncol(datExpr)
+nGenes
+
+
+nSamples = nrow(datExpr)
+nSamples
+
+
+MMPvalue = as.data.frame(corPvalueStudent(as.matrix(geneModuleMembership), nSamples))
+
+
+names(geneModuleMembership) = paste("MM", modNames, sep="")
+print(names(geneModuleMembership))
+
+
+names(MMPvalue) = paste("p.MM", modNames, sep="")
+
+
+
+```
+
+```{r}
+
+library(stringr) 
+
+#
+MEs_col = MEs
+
+
+
+MEs_col
+
+MEs_col = orderMEs(MEs_col)
+
+plotEigengeneNetworks(MEs_col, "Eigengene adjacency heatmap", 
+                      
+                      marHeatmap = c(3,4,2,2), plotDendrograms = F, 
+                      xLabelsAngle = 90)
+
+
+
+
+
+```
+
+```{r}
+
+#Haetmap plots of module expression
+modColour=c("turquoise","blue","brown")
+sizeGrWindow(8,9)
+par(mfrow=c(length(modColour),1), mar=c(1, 2, 4, 1))
+
+for (colour in modColour )
+{
+  
+  
+  which.module=colour
+  plotMat(t(scale(datExpr[,mergedColors==which.module ]) ),nrgcols=30,rlabels=T,
+          clabels=T,rcols=which.module,
+          title=which.module )
+}
+
+
+```
+
+```{r}
+
+library(tidyverse)
+library(readr)
+library(dplyr)
+load("cdata.RData")
+
+sample_editInfo = cancer_d
+
+
+
+sizeGrWindow(8,9)
+
+#which.module="cyan"
+#which.module="brown"
+#which.module="blue"
+
+which.module="turquoise"
+
+#combining eigengene values for blue and truq modules
+ME_turq=MEs[, paste("ME","turquoise", sep="")]
+ME_turq
+
+ME_blue=MEs[, paste("ME","blue", sep="")]
+ME_blue
+
+
+eigene_sample_info = data.frame(ME_turq = ME_turq, ME_blue = ME_blue )
+eigene_sample_info
+
+
+eigene_sample_info = cbind(eigene_sample_info, sample_editInfo)
+print(eigene_sample_info)
+
+eigene_sample_info$lines = sample_editInfo$line[-c(1, 12)]
+
+
+
+eigene_sample_info$condition = as.factor(eigene_sample_info$condition)
+eigene_sample_info$condition
+
+row.names(eigene_sample_info)
+
+#png("turquise_eigengene_exp.png")
+
+ggplot(data=eigene_sample_info, aes(x=row.names(eigene_sample_info), y = ME_turq)) + 
+  geom_bar(colour="turquoise", fill = "turquoise", stat="identity") + scale_x_discrete(labels=eigene_sample_info$condition) +
+  theme(axis.text.x = element_text(face="bold", color="#993333", 
+                                   size=9, angle=90)) + xlab("Condition") + ylab("Eigengene values")
+
+#dev.off()
+
+
+
+
+
+```
+
+
+```{r}
+#png("blue_eigengene_exp.png")
+
+meb=MEs_col$MEblue
+ggplot(data=eigene_sample_info, aes(x=row.names(eigene_sample_info), y = meb)) + 
+  geom_bar(colour="blue", fill = "blue", stat="identity") + scale_x_discrete(labels=eigene_sample_info$condition) +
+  theme(axis.text.x = element_text(face="bold", color="#993333", 
+                                   size=9, angle=90)) + xlab("Condition") + ylab("Eigengene values")
+#dev.off()
+
+
+
+
+
+```
+
+
+
+
+
+```{r}
+
+# Define numbers of genes and samples
+nGenes = ncol(datExpr);
+nGenes
+
+nSamples = nrow(datExpr);
+nSamples
+
+
+
+
+# Recalculate MEs with color labels
+MEs0 = moduleEigengenes(datExpr, moduleColors)$eigengenes
+MEs0
+
+
+MEsnew = orderMEs(MEs0)
+MEsnew
+
+
+
+#sample_editInfo
+sample_editInfonew=select(sample_editInfo, -c(1, 2))
+sample_editInfonew
+
+moduleTraitCor = cor(MEsnew, sample_editInfonew, use = "p")
+moduleTraitCor
+
+
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
+moduleTraitPvalue
+
+
+#names(sample_editInfonew)
+
+sizeGrWindow(10,6)
+# Will display correlations and their p-values
+textMatrix = paste(signif(moduleTraitCor, 2), "\n(",
+                   signif(moduleTraitPvalue, 1), ")", sep = "")
+
+
+
+#png("Module-trait_relationships.png")
+dim(textMatrix) = dim(moduleTraitCor)
+par(mar = c(7, 8.5, 3, 3));
+
+labeledHeatmap(Matrix = moduleTraitCor,
+               xLabels = names(sample_editInfonew),
+               yLabels = names(MEsnew),
+               ySymbols = names(MEsnew),
+               colorLabels = FALSE,
+               colors = greenWhiteRed(50),
+               textMatrix = textMatrix,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(-1,1),
+               main = paste("Module-trait relationships"))
+
+#dev.off()
+
+
+
+
+
+```
+```{r}
+
+
+
+
+
+
