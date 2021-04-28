@@ -20,10 +20,10 @@ library(DESeq2)
 #load dataframe containing each folder path, geneid  and deaad alive condition
 load("cdata.RData")
 
-directory <- "/media/homeShare/sandaru/project_cancer/deadnalive"
+directory = "/media/homeShare/sandaru/project_cancer/deadnalive"
 
 #read count data from each data file
-ddsHTSeq <- DESeqDataSetFromHTSeqCount(sampleTable = cancer_d,
+ddsHTSeq = DESeqDataSetFromHTSeqCount(sampleTable = cancer_d,
                                        directory = directory,
                                        design= ~ condition)
 ddsHTSeq
@@ -61,11 +61,11 @@ plotMA(res)
 #For wgcna vst
 vsd = vst(ddsHTSeq, blind=FALSE)
 
-sampleDists =- dist(t(assay(vsd)))
+sampleDists = dist(t(assay(vsd)))
 
-sampleDistMatrix =- as.matrix(sampleDists)
+sampleDistMatrix = as.matrix(sampleDists)
 
-rownames(sampleDistMatrix) =- paste(vsd$condition, vsd$type, sep="-")
+rownames(sampleDistMatrix) = paste(vsd$condition, vsd$type, sep="-")
 colnames(sampleDistMatrix) = NULL
 colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
 
